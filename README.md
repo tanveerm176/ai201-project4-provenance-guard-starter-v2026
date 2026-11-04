@@ -39,7 +39,24 @@
 <!-- The path a submission takes, from arriving to the label a reader sees.
      Six or seven steps — this is the trace you wrote in Milestone 1. -->
 
-
+1. A writer's client sends `POST /submit` with JSON containing `text` and
+   `creator_id`.
+2. Flask's `/submit` handler validates the request, assigns a new `content_id`,
+   and keeps the text and creator tied to that submission.
+3. `detector.model_signal` tokenizes the text and asks the local GPT-2 model
+   how predictable it is. It adds `model_score`, where a higher value means
+   more predictable and therefore more AI-like to this signal.
+4. `stylometry.style_signal` measures sentence-length variation, vocabulary
+   repetition, and punctuation. It adds `style_score`, also oriented so a
+   higher value means more AI-like.
+5. `scoring.combine_signals` combines those two scores into one
+   `combined_score`; disagreement between signals should contribute
+   uncertainty rather than being hidden.
+6. `scoring.score_to_label` compares the combined score with the label bands
+   and adds a machine-readable `guess` plus reader-facing `label` text.
+7. `audit.log_decision` appends the scores, label, IDs, and status to the
+   audit log. The handler returns the IDs, scores, guess, and label as JSON;
+   the reader sees the label in that response.
 
 ---
 
@@ -52,38 +69,82 @@
      the signal yet — and unit 8's attack set is built out of blind spots. -->
 
 ### Signal one — the model signal
+### Signal one — the model signal
+**What it measures:** `detector.model_signal` measures how predictable the
+text is to a locally run GPT-2 language model. It converts perplexity into a
+0-1 score; higher means more predictable and more AI-like to this signal.
 
-**What it measures:**
+**Why that might differ between human and AI writing:** A language model
+generates likely next tokens, so generated text can have lower perplexity
+(higher signal scores). Human writing can be less predictable because of
+unusual word choices or abrupt shifts.
 
-**Why that might differ between human and AI writing:**
-
-**What it can't see:**
+**What it can't see:** Predictability is not authorship. Plain, conventional
+or second-language human writing can be easy for GPT-2 to predict and score
+as AI-like. Conversely, unusual, dense, or heavily edited AI text can be hard
+to predict and score as human-like. It cannot identify who wrote the text or
+how it was produced.
 
 ### Signal two — the style signal
 
-**What it measures:**
+**What it measures:** `stylometry.style_signal` measures text shape using
+sentence-length spread, type-token ratio (unique words divided by total
+words), and punctuation density. The combined score must point in the same
+direction as the model signal: higher means more AI-like.
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** Generated prose can
+have more even sentence lengths, more repeated vocabulary, and a narrower
+punctuation pattern. Human writing is often less uniform, so those three
+measurements may differ.
 
-**What it can't see:**
+**What it can't see:** These are surface measurements; they cannot understand
+meaning, verify authorship, or tell whether a person edited generated text.
+Short texts and topic or genre choices can change the measurements, and
+someone can change sentence breaks, vocabulary, or punctuation without
+changing the ideas. That can move this signal without changing who wrote the
+text.
 
 ### The combining rule
 
 <!-- Write the rule in words, then give the numbers. What happens when the two
      signals disagree? -->
 
-**The rule:**
+**The rule:** Take the arithmetic mean so neither signal dominates by default.
+When they disagree, the mean moves toward the middle; the disagreement is
+uncertainty, not a reason to let either signal decide alone.
 
-**The numbers:**
+**The numbers:** `combined_score = 0.50 * model_score + 0.50 * style_score`.
+For example, model `0.90` and style `0.10` produce `0.50`, which is `unsure`
+under the proposed label bands below.
 
 **Where it lives:** `scoring.py::combine_signals`
 
 <!-- ⚠️ The grader checks your code against that line. If your rule lives
      somewhere else, say where. -->
 
-**A case where my two signals split, and what my rule does with it:**
+**A case where my two signals split, and what my rule does with it:** A
+plainly written human paragraph might be very predictable to GPT-2 but have
+uneven sentence lengths and punctuation. If the model score is `0.90` and the
+style score is `0.10`, the mean is `0.50`; the system returns `unsure` instead
+of making a high-confidence accusation.
 
+### The false-positive case that sets the policy
 
+Imagine a real writer, especially one writing in a second language, using
+short, common words and straightforward sentences. GPT-2 finds the writing
+predictable. In one illustrative case, the model score is `0.90` and the
+style score is `0.72`; the equal-weight combined score is `0.81`. These
+numbers are an example of the path, not a measured result from the unfinished
+signals.
+
+With the proposed AI cutoff of `0.80`, that writer receives the `ai` guess and
+the label, "This text appears likely to have been written by AI." That is a
+false positive, not proof of misconduct. The writer can submit
+`POST /appeal` with the returned `content_id` and an explanation. The service
+records an `under_review` appeal without overwriting the original decision;
+a person must review it. The wide unsure band and the high AI cutoff are
+intended to make this costly mistake less likely, even though they allow more
+AI-written text to remain uncertain.
 
 ---
 
@@ -96,16 +157,79 @@
 
 | Label | Score range | The exact text a reader sees |
 |---|---|---|
-| high-confidence human |  |  |
-| unsure |  |  |
-| high-confidence AI |  |  |
+| high-confidence human | 0.00-0.35 | This text appears more consistent with human writing. |
+| unsure | above 0.35 and below 0.80 | We can't reliably tell from this text alone. If this is your work, you can ask for a human review. |
+| high-confidence AI | 0.80-1.00 | This text appears likely to have been written by AI. |
 
 **Why I worded the "unsure" one this way:**
 <!-- It's the hardest of the three. It has to admit uncertainty without
      sounding like an accusation, because the person reading it may well have
      written every word themselves. -->
 
+It says the system cannot reliably tell, rather than blaming the writer. It
+also points to a next step instead of leaving someone with a score and no
+recourse.
 
+**Threshold decision:** These are proposed Milestone 1 thresholds, not the
+starter's current runtime settings (`0.35` human and `0.65` AI in
+`config.py`). I propose keeping the human cutoff at `0.35` and raising the AI
+cutoff to `0.80`; a real writer should not receive a high-confidence AI label
+from a borderline score. Milestone 4 calibration must test this tradeoff.
+
+---
+
+## Endpoint Contract
+
+These are the design contracts for the two endpoints being built; both route
+handlers are still TODOs. Successful responses use HTTP `200` and JSON.
+Validation failures use a non-200 status with
+`{"error": "<code>", "message": "<plain-language explanation>"}`.
+
+### `POST /submit`
+
+**Request JSON**
+
+| Field | Type | Required | Meaning |
+|---|---|---:|---|
+| `text` | non-empty string | Yes | Text to score. It must contain enough text for the model signal to run (at least three model tokens). |
+| `creator_id` | non-empty string | Yes | Caller-provided ID used to associate the submission and its audit entries with the creator. |
+
+**Successful response JSON**
+
+| Field | Type | Meaning |
+|---|---|---|
+| `content_id` | string | Unique ID for this submission; use it to appeal. |
+| `guess` | string | One of `human`, `unsure`, or `ai`. |
+| `confidence` | number, 0-1 | Combined AI-likelihood score; this is a score, not a calibrated probability. |
+| `label` | string | Exact reader-facing sentence for the selected guess. |
+| `model_score` | number, 0-1 | `detector.model_signal` result; higher means more AI-like. |
+| `style_score` | number, 0-1 | `stylometry.style_signal` result; higher means more AI-like. |
+
+`confidence` is the response name for the combined score. The audit entry
+stores the same value as `combined_score`, along with `timestamp`,
+`content_id`, `creator_id`, `guess`, `model_score`, `style_score`, `label`,
+and `status` (`decided`).
+
+### `POST /appeal`
+
+**Request JSON**
+
+| Field | Type | Required | Meaning |
+|---|---|---:|---|
+| `content_id` | non-empty string | Yes | ID returned by `/submit` for the decision being challenged. |
+| `reasoning` | non-empty string | Yes | The writer's explanation of why they believe the decision is wrong. |
+
+**Successful response JSON**
+
+| Field | Type | Meaning |
+|---|---|---|
+| `content_id` | string | The appealed submission. |
+| `status` | string | `under_review`; the original decision remains in the append-only audit log. |
+| `message` | string | Confirmation that the appeal was recorded for human review. |
+
+An appeal for an unknown `content_id` returns HTTP `404`; missing or
+malformed required fields return HTTP `400`. An appeal records a review
+request; it does not automatically rescore the text or overturn the result.
 
 ---
 
