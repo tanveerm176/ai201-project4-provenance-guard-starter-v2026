@@ -42,63 +42,58 @@ Two things worth knowing before you pick numbers:
   a **miss**.
 
 ---
-## 1.
+## 1. Limit false positives on my writing
 
-<!-- Your criterion. It must name a number. -->
+Across three evaluation runs, no more than 1 of 10 pieces I wrote myself is
+labeled high-confidence AI in each run.
 
-
-
-**Why this target:**
-
-
-
----
-
-## 2.
-
-<!-- Your criterion. -->
-
-
-
-**Why this target:**
-
-
+**Why this target:** A false accusation can damage a writer's trust and
+reputation, so I would rather let some AI-written text pass than frequently
+accuse people who wrote their own work.
 
 ---
 
-## 3.
+## 2. Separate clearly AI and human scores
 
-<!-- Your criterion. -->
+In each of three runs, the median combined score for 5 clearly AI-generated
+pieces must be at least 0.30 higher than the median for 5 pieces I wrote myself.
 
-
-
-**Why this target:**
-
-
+**Why this target:** A visible gap makes the score useful for distinguishing
+clear examples, while using medians reduces the influence of one unusual text.
 
 ---
 
-## 4.
+## 3. Reach all three labels
 
-<!-- Your criterion. -->
+In each of three runs, the test set must produce at least one `human`, one
+`unsure`, and one `ai` label.
 
-
-
-**Why this target:**
-
-
+**Why this target:** All three outcomes need to be possible in practice; an
+unreachable label would make part of the service's uncertainty policy useless.
 
 ---
 
-## 5.
+## 4. Record every valid appeal
 
-<!-- Your criterion. -->
+For 5 valid appeals against existing submissions, all 5 must receive a success
+response and add an `under_review` appeal entry to the audit log, while leaving
+each original decision entry intact.
 
+**Why this target:** Writers need a dependable path to challenge a decision, and
+keeping both entries provides an auditable history rather than erasing the
+original decision.
 
+---
 
-**Why this target:**
+## 5. Reject malformed or oversized text
 
+For each of these inputs—missing `text`, empty or whitespace-only `text`, null
+`text`, and text longer than 50,000 characters—the service must return HTTP 400
+or 413, create no scored decision, and record a rejection in the audit log.
 
+**Why this target:** Invalid input should fail clearly without crashing or
+consuming scoring resources, and logging rejections makes those failures
+visible for troubleshooting.
 
 ---
 
