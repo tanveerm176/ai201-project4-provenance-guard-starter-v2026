@@ -248,12 +248,25 @@ request; it does not automatically rescore the text or overturn the result.
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "...", "creator_id": "..."}'
+  -d '{"text": "Honestly? I burned the toast again, swore at the smoke alarm, and ended up eating cold cereal on my fire escape while a pigeon eyed me like I owed it rent.", "creator_id": "tanveer"}'
 ```
 
 ```json
-
+{
+  "confidence": 0.0,
+  "content_id": "e2bebf3d-ae58-46c7-9a12-f6f3c27354ae",
+  "guess": "unsure",
+  "label": "PLACEHOLDER",
+  "model_score": 0.1777,
+  "style_score": null
+}
 ```
+
+*(Milestone 3 state: only the model signal is real; `style_score`, confidence,
+guess and label are placeholders until Milestones 4 and 5.)*
+
+A bad input (`{"text": "", "creator_id": "x"}`) returns HTTP `400` and is logged
+as a `rejected` entry.
 
 **An appeal**
 
@@ -274,7 +287,29 @@ $ curl "http://127.0.0.1:5000/log?limit=3"
 ```
 
 ```json
-
+{
+  "count": 2,
+  "entries": [
+    {
+      "combined_score": null,
+      "content_id": "e2bebf3d-ae58-46c7-9a12-f6f3c27354ae",
+      "creator_id": "tanveer",
+      "guess": "unsure",
+      "label": "PLACEHOLDER",
+      "model_score": 0.1777,
+      "status": "decided",
+      "style_score": null,
+      "timestamp": "2026-11-04T03:11:04+00:00"
+    },
+    {
+      "creator_id": "x",
+      "event": "rejected",
+      "reason": "invalid_text",
+      "status": "rejected",
+      "timestamp": "2026-11-04T03:11:04+00:00"
+    }
+  ]
+}
 ```
 
 ---

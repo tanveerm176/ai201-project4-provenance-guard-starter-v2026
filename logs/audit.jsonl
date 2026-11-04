@@ -1,0 +1,2 @@
+{"timestamp": "2026-11-04T03:11:04+00:00", "content_id": "e2bebf3d-ae58-46c7-9a12-f6f3c27354ae", "creator_id": "tanveer", "guess": "unsure", "model_score": 0.1777, "style_score": null, "combined_score": null, "label": "PLACEHOLDER", "status": "decided"}
+{"timestamp": "2026-11-04T03:11:04+00:00", "creator_id": "x", "event": "rejected", "status": "rejected", "reason": "invalid_text"}
