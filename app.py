@@ -231,8 +231,7 @@ def submit():
     combined_score = scoring.combine_signals(model_score, style_score)
 
     content_id = str(uuid.uuid4())
-    guess = "unsure"  # placeholder until Milestone 5
-    label = "PLACEHOLDER"  # placeholder until Milestone 5
+    guess, label = scoring.score_to_label(combined_score)
 
     audit.log_decision(
         content_id=content_id,
@@ -275,14 +274,31 @@ def appeal():
     to the person on the other end. It's the only thing standing between a
     wrong accusation and nothing at all.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        payload = {}
+    content_id = payload.get("content_id")
+    reasoning = payload.get("reasoning")
 
-    # TODO: delete this and build the route.
+    if not isinstance(content_id, str) or not content_id.strip():
+        return jsonify({"error": "invalid_input",
+                        "message": "`content_id` must be a non-empty string."}), 400
+    if not isinstance(reasoning, str) or not reasoning.strip():
+        return jsonify({"error": "invalid_input",
+                        "message": "`reasoning` must be a non-empty string."}), 400
+
+    # Decision entries have no "event" key; appeals and rejections do.
+    decisions = [e for e in audit.entries_for(content_id) if "event" not in e]
+    if not decisions:
+        return jsonify({"error": "not_found",
+                        "message": "No submission has that content_id."}), 404
+
+    audit.log_appeal(content_id, decisions[0]["creator_id"], reasoning.strip())
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /appeal isn't built yet — see the TODO in app.py.",
-        "you_sent": payload,
-    }), 501
+        "content_id": content_id,
+        "status": "under_review",
+        "message": "Your appeal was recorded and will be reviewed by a person.",
+    })
 
 
 # ── Already works ─────────────────────────────────────────────────────────────

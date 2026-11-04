@@ -90,12 +90,14 @@ def score_to_label(score: float) -> tuple[str, str]:
     think if they got it on their own work. That question is the whole
     milestone.
     """
-    # TODO: replace this — thresholds are in config.py
     if score >= config.AI_THRESHOLD:
-        return "ai", "PLACEHOLDER — write the high-confidence AI label."
+        return "ai", "This text appears likely to have been written by AI."
     if score <= config.HUMAN_THRESHOLD:
-        return "human", "PLACEHOLDER — write the high-confidence human label."
-    return "unsure", "PLACEHOLDER — write the unsure label."
+        return "human", "This text appears more consistent with human writing."
+    return "unsure", (
+        "We can't reliably tell from this text alone. "
+        "If this is your work, you can ask for a human review."
+    )
 
 
 def label_ranges() -> list[tuple[str, str]]:

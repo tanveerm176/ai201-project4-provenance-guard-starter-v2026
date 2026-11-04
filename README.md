@@ -190,6 +190,11 @@ It says the system cannot reliably tell, rather than blaming the writer. It
 also points to a next step instead of leaving someone with a score and no
 recourse.
 
+**Reachability check (live through `/submit`):** clearly AI text scored `0.614`
+and got the AI label; plain human writing scored `0.499` and got "unsure";
+clearly human writing scored `0.107` and got the human label. All three are
+reachable, and `scoring.label_ranges()` shows no gap between the bands.
+
 **Threshold decision:** The human cutoff stays at `0.35`. In Milestone 1 I
 proposed an AI cutoff of `0.80`, but calibration showed the combined score for
 clearly AI text tops out near `0.61`, so `0.80` would make the AI label
@@ -268,69 +273,75 @@ request; it does not automatically rescore the text or overturn the result.
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "Honestly? I burned the toast again, swore at the smoke alarm, and ended up eating cold cereal on my fire escape while a pigeon eyed me like I owed it rent.", "creator_id": "tanveer"}'
+  -d '{"text": "I went to the store yesterday to buy some groceries. The prices were higher than I expected, so I only bought the essentials. I got milk, bread, and eggs. It was a pretty normal trip overall. Then I went home and made dinner.", "creator_id": "m5_plain_human"}'
 ```
 
 ```json
 {
-  "confidence": 0.0,
-  "content_id": "e2bebf3d-ae58-46c7-9a12-f6f3c27354ae",
+  "confidence": 0.4993,
+  "content_id": "932fb5e7-9956-4214-8068-018a9a19e78e",
   "guess": "unsure",
-  "label": "PLACEHOLDER",
-  "model_score": 0.1777,
-  "style_score": null
+  "label": "We can't reliably tell from this text alone. If this is your work, you can ask for a human review.",
+  "model_score": 0.8305,
+  "style_score": 0.3889
 }
 ```
 
-*(Milestone 3 state: only the model signal is real; `style_score`, confidence,
-guess and label are placeholders until Milestones 4 and 5.)*
-
-A bad input (`{"text": "", "creator_id": "x"}`) returns HTTP `400` and is logged
-as a `rejected` entry.
+(`confidence` is the combined score.) A bad input (`{"text": "", "creator_id": "x"}`)
+returns HTTP `400` and is logged as a `rejected` entry.
 
 **An appeal**
 
 ```bash
 $ curl -X POST http://127.0.0.1:5000/appeal \
   -H "Content-Type: application/json" \
-  -d '{"content_id": "...", "reasoning": "..."}'
-```
-
-```json
-
-```
-
-**What the log shows afterwards**
-
-```bash
-$ curl "http://127.0.0.1:5000/log?limit=3"
+  -d '{"content_id": "932fb5e7-9956-4214-8068-018a9a19e78e", "reasoning": "I wrote this myself about a trip to the store."}'
 ```
 
 ```json
 {
-  "count": 2,
+  "content_id": "932fb5e7-9956-4214-8068-018a9a19e78e",
+  "message": "Your appeal was recorded and will be reviewed by a person.",
+  "status": "under_review"
+}
+```
+
+An unknown `content_id` returns `404`; a missing `reasoning` returns `400`.
+
+**What the log shows afterwards** (both entries for that `content_id`; the
+original decision is untouched and the appeal sits after it)
+
+```bash
+$ curl "http://127.0.0.1:5000/log"
+```
+
+```json
+{
   "entries": [
     {
-      "combined_score": null,
-      "content_id": "e2bebf3d-ae58-46c7-9a12-f6f3c27354ae",
-      "creator_id": "tanveer",
+      "timestamp": "2026-11-04T03:19:36+00:00",
+      "content_id": "932fb5e7-9956-4214-8068-018a9a19e78e",
+      "creator_id": "m5_plain_human",
       "guess": "unsure",
-      "label": "PLACEHOLDER",
-      "model_score": 0.1777,
-      "status": "decided",
-      "style_score": null,
-      "timestamp": "2026-11-04T03:11:04+00:00"
+      "model_score": 0.8305,
+      "style_score": 0.3889,
+      "combined_score": 0.4993,
+      "label": "We can't reliably tell from this text alone. If this is your work, you can ask for a human review.",
+      "status": "decided"
     },
     {
-      "creator_id": "x",
-      "event": "rejected",
-      "reason": "invalid_text",
-      "status": "rejected",
-      "timestamp": "2026-11-04T03:11:04+00:00"
+      "timestamp": "2026-11-04T03:19:36+00:00",
+      "content_id": "932fb5e7-9956-4214-8068-018a9a19e78e",
+      "creator_id": "m5_plain_human",
+      "event": "appeal",
+      "status": "under_review",
+      "reasoning": "I wrote this myself about a trip to the store."
     }
   ]
 }
 ```
+
+(Other entries trimmed for length.)
 
 ---
 
