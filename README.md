@@ -41,8 +41,9 @@
 
 1. A writer's client sends `POST /submit` with JSON containing `text` and
    `creator_id`.
-2. Flask's `/submit` handler validates the request, assigns a new `content_id`,
-   and keeps the text and creator tied to that submission.
+2. Flask's `/submit` handler validates the request (400 and a `rejected` log
+   entry for missing or empty `text` or `creator_id`) and assigns a new
+   `content_id`.
 3. `detector.model_signal` tokenizes the text and asks the local GPT-2 model
    how predictable it is. It adds `model_score`, where a higher value means
    more predictable and therefore more AI-like to this signal.
@@ -50,8 +51,8 @@
    repetition, and punctuation. It adds `style_score`, also oriented so a
    higher value means more AI-like.
 5. `scoring.combine_signals` combines those two scores into one
-   `combined_score`; disagreement between signals should contribute
-   uncertainty rather than being hidden.
+   `combined_score`: the mean of the two, pulled halfway toward the lower
+   one so that both signals must look AI-like for a high score.
 6. `scoring.score_to_label` compares the combined score with the label bands
    and adds a machine-readable `guess` plus reader-facing `label` text.
 7. `audit.log_decision` appends the scores, label, IDs, and status to the
@@ -349,15 +350,33 @@ $ curl "http://127.0.0.1:5000/log"
 
 **Moment 1**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* A second signal in `stylometry.py` (sentence-length
+  spread, vocabulary variety, punctuation density) and a combining rule in
+  `scoring.py::combine_signals`.
+- *What came back:* Working measures scaled 0-1 and a rule that takes the mean
+  of the two signals. On my first calibration run the plain human paragraph
+  scored `0.83` on the model signal, higher than clearly AI text, and the
+  lightly edited AI paragraph scored as human.
+- *What I changed:* I re-scaled the style constants against my samples,
+  down-weighted vocabulary variety because it barely separated anything, and
+  changed the rule to pull the mean halfway toward the lower signal so that the
+  model signal alone can't produce an AI label. I also lowered `AI_THRESHOLD`
+  from my planned `0.80` to `0.55`, because clear AI text only reached `0.61`
+  and `0.80` made the AI label unreachable.
 
 **Moment 2**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* The `/submit` and `/appeal` routes, built in stages with
+  a hardcoded response first.
+- *What came back:* Routes that validate input (400 on bad requests), log every
+  decision, and return both signal scores. The appeal route returned 404 for
+  unknown IDs and appended an `under_review` entry without touching the original
+  decision.
+- *What I changed:* I checked behaviour myself with `curl` and the log rather
+  than trusting the code: the first run of `python app.py` failed because
+  flask is only installed in `.venv`, so I ran everything through
+  `.venv\Scripts\python.exe`. I also noted that the tuned constants are
+  optimistic because they were fitted to the same five samples I tested on.
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
