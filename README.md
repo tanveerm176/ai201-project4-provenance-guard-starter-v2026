@@ -109,24 +109,44 @@ text.
 <!-- Write the rule in words, then give the numbers. What happens when the two
      signals disagree? -->
 
-**The rule:** Take the arithmetic mean so neither signal dominates by default.
-When they disagree, the mean moves toward the middle; the disagreement is
-uncertainty, not a reason to let either signal decide alone.
+**The rule:** Take the mean of the two signals, then pull it halfway toward the
+*lower* of the two. A high score needs both signals to look AI-like, so the
+model signal alone (which over-flags plain human writing) can't produce an
+accusation. When they disagree, the result lands in the middle or low.
 
-**The numbers:** `combined_score = 0.50 * model_score + 0.50 * style_score`.
-For example, model `0.90` and style `0.10` produce `0.50`, which is `unsure`
-under the proposed label bands below.
+**The numbers:** `mean = 0.50 * model_score + 0.50 * style_score`, then
+`combined_score = 0.5 * mean + 0.5 * min(model_score, style_score)`
+(`WEIGHT_*` and `LOWER_SIGNAL_PULL` in `config.py`). Style itself is
+`0.45 * spread + 0.15 * vocabulary + 0.40 * punctuation`, each scaled 0-1.
 
 **Where it lives:** `scoring.py::combine_signals`
 
 <!-- ⚠️ The grader checks your code against that line. If your rule lives
      somewhere else, say where. -->
 
-**A case where my two signals split, and what my rule does with it:** A
-plainly written human paragraph might be very predictable to GPT-2 but have
-uneven sentence lengths and punctuation. If the model score is `0.90` and the
-style score is `0.10`, the mean is `0.50`; the system returns `unsure` instead
-of making a high-confidence accusation.
+**A case where my two signals split, and what my rule does with it:** My plain
+human paragraph ("I went to the store yesterday...") scored model `0.83` (very
+predictable to GPT-2) but style `0.39` (uneven sentences, some commas). A plain
+mean gives `0.61`; the rule gives `0.50`, which is `unsure`, not an accusation.
+The formal human paragraph also split: model `0.61`, style `0.03`, combined
+`0.17`, so it reads as human.
+
+**Calibration run (Milestone 4, 5 hand-picked texts, live through `/submit`):**
+
+| Input | model | style | combined |
+|---|---|---|---|
+| clearly AI | 0.755 | 0.567 | 0.614 |
+| clearly human | 0.274 | 0.051 | 0.107 |
+| plain human | 0.831 | 0.389 | 0.499 |
+| formal human | 0.611 | 0.026 | 0.172 |
+| lightly edited AI | 0.389 | 0.010 | 0.105 |
+
+The lightly edited AI paragraph scored as human on both signals: casual
+wording, a dash and shorter sentences fooled both. That is a missed detection I
+accept for now, since wrongly accusing a writer costs more. The gap between
+clear AI (`0.61`) and plain human (`0.50`) is thin, and 5 samples is too few to
+trust the constants. I tuned the scale constants in `stylometry.py` against
+these same samples, so they are optimistic.
 
 ### The false-positive case that sets the policy
 
@@ -137,7 +157,7 @@ style score is `0.72`; the equal-weight combined score is `0.81`. These
 numbers are an example of the path, not a measured result from the unfinished
 signals.
 
-With the proposed AI cutoff of `0.80`, that writer receives the `ai` guess and
+With the old Milestone 1 AI cutoff of `0.80`, that writer would receive the `ai` guess and
 the label, "This text appears likely to have been written by AI." That is a
 false positive, not proof of misconduct. The writer can submit
 `POST /appeal` with the returned `content_id` and an explanation. The service
@@ -158,8 +178,8 @@ AI-written text to remain uncertain.
 | Label | Score range | The exact text a reader sees |
 |---|---|---|
 | high-confidence human | 0.00-0.35 | This text appears more consistent with human writing. |
-| unsure | above 0.35 and below 0.80 | We can't reliably tell from this text alone. If this is your work, you can ask for a human review. |
-| high-confidence AI | 0.80-1.00 | This text appears likely to have been written by AI. |
+| unsure | above 0.35 and below 0.55 | We can't reliably tell from this text alone. If this is your work, you can ask for a human review. |
+| high-confidence AI | 0.55-1.00 | This text appears likely to have been written by AI. |
 
 **Why I worded the "unsure" one this way:**
 <!-- It's the hardest of the three. It has to admit uncertainty without
@@ -170,11 +190,11 @@ It says the system cannot reliably tell, rather than blaming the writer. It
 also points to a next step instead of leaving someone with a score and no
 recourse.
 
-**Threshold decision:** These are proposed Milestone 1 thresholds, not the
-starter's current runtime settings (`0.35` human and `0.65` AI in
-`config.py`). I propose keeping the human cutoff at `0.35` and raising the AI
-cutoff to `0.80`; a real writer should not receive a high-confidence AI label
-from a borderline score. Milestone 4 calibration must test this tradeoff.
+**Threshold decision:** The human cutoff stays at `0.35`. In Milestone 1 I
+proposed an AI cutoff of `0.80`, but calibration showed the combined score for
+clearly AI text tops out near `0.61`, so `0.80` would make the AI label
+unreachable. `config.py` and the table above now use `0.55`. That still keeps plain human writing
+(`0.50`) in `unsure`, though only narrowly.
 
 ---
 

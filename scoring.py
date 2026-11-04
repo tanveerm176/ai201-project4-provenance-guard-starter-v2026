@@ -52,11 +52,16 @@ def combine_signals(model_score: float, style_score: float) -> float:
     The weights in config.py are placeholders. Change them, or ignore them and
     write a different rule.
     """
-    # TODO: replace this
-    return (
+    # Mean of the two signals, then pulled toward the lower one. A high score
+    # needs BOTH signals to agree it looks like AI, so the model signal alone
+    # (which over-flags plain human writing) can't make an accusation.
+    mean = (
         config.WEIGHT_MODEL_SIGNAL * model_score
         + config.WEIGHT_STYLE_SIGNAL * style_score
     )
+    lower = min(model_score, style_score)
+    pull = config.LOWER_SIGNAL_PULL
+    return round((1 - pull) * mean + pull * lower, 4)
 
 
 def score_to_label(score: float) -> tuple[str, str]:

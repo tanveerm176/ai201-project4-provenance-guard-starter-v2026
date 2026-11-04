@@ -1,4 +1,4 @@
-"""
+﻿"""
 Signal two: the style signal. ← YOU BUILD THIS IN MILESTONE 4
 
 Signal one reads the text for meaning. This one measures it *as text* — the
@@ -40,6 +40,17 @@ def sentences(text: str) -> list[str]:
     return [p for p in parts if p.strip()]
 
 
+TTR_WINDOW = 100
+SPREAD_HUMAN = 0.5    # sentence-length spread at/above this reads fully human
+TTR_HUMAN = 0.95      # type-token ratio at/above this reads fully human
+TTR_RANGE = 0.20      # ...and this far below it reads fully AI
+PUNCT_HUMAN = 0.10    # punctuation per word at/above this reads fully human
+
+
+def _clamp(x: float) -> float:
+    return min(max(x, 0.0), 1.0)
+
+
 def words(text: str) -> list[str]:
     """Split into lowercase words, punctuation stripped. Given to you."""
     return re.findall(r"[a-z0-9']+", text.lower())
@@ -64,8 +75,13 @@ def sentence_length_spread(text: str) -> float:
     `stdev` raises on fewer than two values. Decide what that should return
     before the attack set decides for you.
     """
-    # TODO: replace this
-    return 0.0
+    lengths = [len(words(s)) for s in sentences(text)]
+    lengths = [n for n in lengths if n > 0]
+    # One sentence has no spread to measure; 0.0 here, and style_signal
+    # treats it as "no information" rather than "machine-like".
+    if len(lengths) < 2:
+        return 0.0
+    return statistics.stdev(lengths) / statistics.mean(lengths)
 
 
 def type_token_ratio(text: str) -> float:
@@ -80,8 +96,13 @@ def type_token_ratio(text: str) -> float:
     directly comparable on it, and if your test inputs vary a lot in length,
     that alone can look like a signal.
     """
-    # TODO: replace this
-    return 0.0
+    tokens = words(text)
+    if not tokens:
+        return 0.0
+    # Only the first 100 words, so a long text isn't penalised for repeating
+    # common words more often than a short one.
+    window = tokens[:TTR_WINDOW]
+    return len(set(window)) / len(window)
 
 
 def punctuation_density(text: str) -> float:
@@ -94,8 +115,12 @@ def punctuation_density(text: str) -> float:
         more interesting than full stops, because they vary more between
         writers.
     """
-    # TODO: replace this
-    return 0.0
+    tokens = words(text)
+    if not tokens:
+        return 0.0
+    # Full stops are excluded: nearly everyone uses them, so they say little.
+    marks = re.findall(r"[,;:!?\"()\u2014\u2013-]", text)
+    return len(marks) / len(tokens)
 
 
 # ── Combining them ───────────────────────────────────────────────────────────
@@ -122,8 +147,24 @@ def style_signal(text: str) -> float:
     you trust it. Plain and ordinary, not formal: formal prose reads as *human*
     to signal one, and it is plain writing that gets accused.
     """
-    # TODO: replace this
-    return 0.5
+    parts = []  # (score, weight)
+
+    # Each part is 0 (human-like) to 1 (AI-like). Low spread, low vocabulary
+    # variety and sparse punctuation all point toward AI, so each is flipped
+    # and scaled against a rough human range. Vocabulary variety gets a small
+    # weight: on short texts it barely separated my calibration samples.
+    if len(sentences(text)) >= 2:
+        spread = sentence_length_spread(text)
+        parts.append((_clamp(1 - spread / SPREAD_HUMAN), 0.45))
+
+    ttr = type_token_ratio(text)
+    parts.append((_clamp((TTR_HUMAN - ttr) / TTR_RANGE), 0.15))
+
+    punct = punctuation_density(text)
+    parts.append((_clamp(1 - punct / PUNCT_HUMAN), 0.40))
+
+    total = sum(w for _, w in parts)
+    return round(sum(s * w for s, w in parts) / total, 4)
 
 
 if __name__ == "__main__":
@@ -140,3 +181,4 @@ if __name__ == "__main__":
     print(f"punctuation_density      {punctuation_density(text)}")
     print(f"style_signal             {style_signal(text)}   (higher = more likely AI)")
     print("\nAll zeros? These are stubs — Milestone 4 is where you build them.")
+
