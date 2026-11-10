@@ -627,37 +627,96 @@ run showed that is where false positives actually are: 5 of 8.
 
 ## The Improvement
 
-**What I changed:**
+**What I changed:** one change, validate the input at the route before either signal
+runs. `app.py::submit` now rejects (and logs with `audit.log_rejection`):
+- text over `MAX_TEXT_CHARS = 50_000` → `413`, reason `text_too_long`
+- text where fewer than half the letters are Latin script, or with no letters → `400`, `unsupported_script`
+- text with fewer than `MIN_WORDS = 5` words → `400`, `too_few_words`
 
-**Which diagnosis pointed at it:**
+The three constants are in `config.py`. Scoring, weights and thresholds are untouched.
+
+**Which diagnosis pointed at it:** pattern 1, "the route trusts its input": the
+criterion 5 miss (no size cap) and MF03–MF08 (control characters, punctuation, one long word,
+emoji, right-to-left script, 60,000 characters), where garbage was scored and even labelled `ai`.
 
 ### Attack Run — After
 
-<!-- Same format. `run_attacks.py --label after` -->
+Full table: `results/attack_run_2026-11-09_2125_after.md`; before: `results/attack_run_2026-11-09_2018_before.md`.
+Same marking rule as before. **Before: 32 held / 24 broke. After: 38 held / 18 broke.**
 
+| Family | Before (held / broke) | After (held / broke) | What changed |
+|---|---|---|---|
+| evasion (10) | 1 / 9 | 1 / 9 | nothing; every score is identical |
+| false_positive (8) | 3 / 5 | 3 / 5 | nothing; FP02–FP06 still `ai` |
+| prompt_injection (6) | 2 / 4 | 2 / 4 | nothing |
+| malformed (20) | 14 / 6 | 20 / 0 | MF03 `200 human` → `400`; MF04 `200 human` → `400`; MF05 `200 ai` → `400`; MF06 `200 ai 0.998` → `400`; MF07 `200 ai` → `400`; MF08 `200 ai` → `413` |
+| flood_same_creator (12) | 12 / 0 | 12 / 0 | unchanged (5 × `200`, 7 × `429`) |
 
+Rejection entries from the after run (`results/audit_extract_after.json`):
 
-**Did it help, and how do I know:**
+```json
+{"timestamp":"2026-11-10T02:25:09+00:00","creator_id":"attacker_MF06","event":"rejected","status":"rejected","reason":"unsupported_script"}
+{"timestamp":"2026-11-10T02:25:09+00:00","creator_id":"attacker_MF05","event":"rejected","status":"rejected","reason":"too_few_words"}
+{"timestamp":"2026-11-10T02:25:09+00:00","creator_id":"attacker_MF08","event":"rejected","status":"rejected","reason":"text_too_long","length":57640}
+```
 
-<!-- Widening the unsure band usually fixes one problem and creates another.
-     Reporting that trade honestly is worth full credit. -->
+**Run log, before and after** (`results/run_2026-11-09_2108_before.md` and
+`results/run_2026-11-09_2126_after.md`; three trials each, identical within each set):
 
+| Criterion | Target | Before (R1 / R2 / R3) | After (R1 / R2 / R3) | Verdict before → after |
+|---|---|---|---|---|
+| 1. Own writing flagged as AI | ≤ 1 of 10 | 0 / 0 / 0 | 0 / 0 / 0 | MET → MET |
+| 2. Score spread (AI median − own median) | ≥ 0.30 | 0.246 / 0.246 / 0.246 | 0.246 / 0.246 / 0.246 | MISSED → MISSED |
+| 3. All three labels reachable | 3 of 3 | 3 / 3 / 3 | 3 / 3 / 3 | MET → MET |
+| 4. Valid appeals recorded | 5 of 5 | 5 / 5 / 5 | 5 / 5 / 5 | MET → MET |
+| 5. Bad input → 400/413, no decision, rejection logged | 5 of 5 | 4 / 4 / 4 | 5 / 5 / 5 | MISSED → **MET** |
 
+Real output for the fixed case, `app.py::submit` via `scenarios.py::_run_bad_input`
+(after run, trial 1):
+
+```json
+{"passed": true, "kind": "over_50000_chars", "status": 413, "decision_entries": 0, "rejection_entries": 1,
+ "body": {"error": "text_too_long", "message": "`text` must be at most 50000 characters."}}
+```
+
+**Did it help, and how do I know:** It helped on exactly what it targeted and nothing else.
+Criterion 5 went from 4/5 to 5/5 in all three trials, and all six scored-garbage malformed
+attacks (MF03–MF08) became rejections that left a log entry and no decision. It did not
+touch the other 18 broken attacks, because every one of them is scored text whose scores
+came out identical to four decimals; criterion 2 is unchanged at 0.246. That confirms
+the diagnosis: the route problem and the signal problems are separate, and validating
+input does nothing for signal two or for false positives.
+
+**What it costs:** it rejects some input that is legitimate.
+- A real 3- or 4-word submission is now a `400` instead of an `unsure` (FP08, 7 words, is still scored).
+- Writers in non-Latin scripts, and mostly non-Latin mixed text, are refused outright. That
+  is arguably more honest than before, since GPT-2 scored RTL text `ai` at 0.93 and that
+  would have been a confident false accusation, but it means this service simply doesn't
+  support those writers, and the response says so rather than hiding it.
+- A 50,000-character cap is generous against a 400-token window; the longer text is still only partially read.
 
 ---
 
 ## What's Still Broken
 
-<!-- For each attack still getting through and each criterion still missed:
-     what you'd do, and why you stopped. -->
+- **The 18 scored attacks** (EV01–EV09, FP02–FP06, PI01–PI03, PI05). One cause per group: signal two
+  can be moved cheaply with filler, quotes and punctuation (EV02, EV03, EV07, EV09, PI05);
+  typos and rare words spike GPT-2 perplexity (EV01, EV04); both signals read plain
+  human writing as AI (FP02–FP06). I stopped because each fix is a separate change with
+  its own side effects, and the milestone asks for one. What I'd do next: make signal two harder to
+  game (drop punctuation density or cap its weight, normalise typos before scoring) and add a
+  third signal not tied to plainness.
+- **Criterion 2** (gap 0.246 vs 0.30). Stylometry doesn't separate short, generic AI
+  paragraphs from casual human prose. The numbers stay as written; I did not lower the target.
+- **EV08** (10-word AI text) still gets a confident `human`. Raising `MIN_WORDS` would catch
+  it, at the cost of rejecting more real short submissions.
+- **Everything is measured on stand-in writing** I drafted for criteria 1–2, and the attack set's
+  `false_positive` rows, so the numbers show direction, not real accuracy.
 
-
-
-**The trade I'd make if this ran for real:**
-
-<!-- Two sentences. Fewer wrong accusations means more AI text getting through.
-     Say which way you'd go and WHO PAYS FOR IT. -->
-
+**The trade I'd make if this ran for real:** I'd keep the AI cutoff high and the unsure band wide, so fewer
+real writers are accused and more AI text goes through as `unsure` or `human`. The people who pay for that are
+the site and honest writers competing against undetected AI text, rather than the writer wrongly
+accused, who in 5 of 8 of my false-positive attacks would have been.
 
 
 <!-- ═════════════════════════════════════════════════════════════════════

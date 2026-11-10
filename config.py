@@ -46,6 +46,12 @@ DETECTOR_MODEL = os.getenv("AI201_DETECTOR_MODEL", "gpt2")
 # 300 words, which is enough for the signal to mean something.
 DETECTOR_MAX_TOKENS = 400
 
+# Input validation (unit 8, Milestone 5): checked in app.py::submit before
+# either signal runs.
+MAX_TEXT_CHARS = 50_000
+MIN_WORDS = 5
+MIN_LATIN_LETTER_FRACTION = 0.5
+
 
 # ─── Scoring (Milestone 4) ───────────────────────────────────────────────────
 # How much each signal counts toward the combined score.

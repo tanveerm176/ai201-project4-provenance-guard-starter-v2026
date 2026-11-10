@@ -24,6 +24,7 @@ Routes:
     GET  /health      is the service up, and is the model loaded
 """
 
+import re
 import uuid
 
 from flask import Flask, jsonify, request
@@ -217,6 +218,24 @@ def submit():
         audit.log_rejection("unknown", "invalid_creator_id")
         return jsonify({"error": "invalid_input",
                         "message": "`creator_id` must be a non-empty string."}), 400
+
+    # Validate before any signal runs: oversize, wordless and non-Latin text
+    # must be rejected, not scored.
+    if len(text) > config.MAX_TEXT_CHARS:
+        audit.log_rejection(creator_id, "text_too_long", length=len(text))
+        return jsonify({"error": "text_too_long",
+                        "message": f"`text` must be at most {config.MAX_TEXT_CHARS} characters."}), 413
+    letters = [c for c in text if c.isalpha()]
+    latin = sum(1 for c in letters if c.isascii() or "\u00c0" <= c <= "\u024f")
+    if not letters or latin / len(letters) < config.MIN_LATIN_LETTER_FRACTION:
+        audit.log_rejection(creator_id, "unsupported_script")
+        return jsonify({"error": "invalid_input",
+                        "message": "`text` must be mostly Latin-script prose; "
+                                   "this detector only supports English."}), 400
+    if len(re.findall(r"[^\W\d_]+", text)) < config.MIN_WORDS:
+        audit.log_rejection(creator_id, "too_few_words")
+        return jsonify({"error": "invalid_input",
+                        "message": f"`text` needs at least {config.MIN_WORDS} words."}), 400
 
     try:
         model_score = detector.model_signal(text)
