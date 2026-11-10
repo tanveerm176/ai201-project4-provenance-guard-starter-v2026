@@ -564,31 +564,62 @@ produced by `app.py::submit` and `app.py::appeal`, recorded by
 ]
 ```
 
-**Diagnoses**
+**Verdicts** (every target must hold in all three trials; none did anything but repeat exactly):
+criteria 1, 3 and 4 **MET**; criteria 2 and 5 **MISSED**. No criterion is revised: both
+misses were measurable and unmet, not unmeasurable, and I'm not lowering either number.
+(Criterion 1 is MET only on stand-in text, see the caveat above, so it is the one I'd
+re-run first on real writing.)
 
-- **Criterion 5 (route):** `app.py::submit` has no length check, so a 50,005-character
-  body goes straight to scoring: it returned `200`, was scored `ai` at 0.998, wrote
-  a decision entry and no rejection. The route stage needs a size cap returning
-  413 plus `audit.log_rejection`. Also a cost risk: it ran the model on oversize input.
-- **Criterion 2 (signal one / combining rule):** the AI pieces' `model_score`
-  was high (0.77–0.91) but `style_score` stayed 0.31–0.47, and the combining rule
-  pulls toward the lower signal (`LOWER_SIGNAL_PULL = 0.5`), so the combined
-  gap is 0.246. Stylometry doesn't separate short, generic AI paragraphs from
-  casual human writing, so signal two is the weak stage.
+**Diagnoses of the two missed criteria**
 
-<!-- For each miss AND each broken attack: the stage and the mechanism.
+- **Criterion 5: stage = the route; mechanism = no size cap.** `app.py::submit` validates
+  only "is `text` a non-empty string" and then calls `detector.model_signal`. A 50,005-character
+  body passes, returned `200`, scored `ai` at 0.998, wrote a decision entry and no rejection.
+  `detector.py` silently truncates to `DETECTOR_MAX_TOKENS = 400`, so the model never reads
+  almost all of the text it "scored".
+- **Criterion 2: stage = signal two, amplified by the combining rule.** The five AI pieces
+  had `model_score` 0.77–0.91 but `style_score` only 0.31–0.51. `combine_signals` pulls halfway toward
+  the *lower* signal, so a weak style score caps the result: AI median 0.451 vs own-writing
+  median 0.205, a gap of 0.246 against a target of 0.30. The mechanism is that
+  `stylometry.style_signal` rewards uneven sentence length and heavy punctuation as "human", and
+  casual first-person paragraphs have both while short, generic AI paragraphs of 3 even sentences
+  do not stand out enough on either.
 
-     Your service has five stages: the route, signal one, signal two, the
-     combining rule, and the label mapping.
+**Diagnoses of every broken attack** (signal scores from the audit log, `results/audit_extract.json`)
 
-     Not a diagnosis:  "The evasion attacks got through."
-     A diagnosis:      "Four evasion inputs got through. All four had typos
-                        added to AI-generated text. My second signal measures
-                        word variety, and typos raise word variety — so it read
-                        them as more human. My combining rule weights that
-                        signal at 0.6, so it dragged the whole score down."
+| Attacks that broke | What came back | Stage | Mechanism |
+|---|---|---|---|
+| EV01 (typos) | model 0.16, style 0.58 → human 0.27 | signal one | Misspellings are tokens GPT-2 finds surprising, so perplexity spiked and `model_score` fell to 0.16 (the unmodified paragraph scores roughly 0.6–0.8, as EV03 and the AI pieces show). The combining rule's min-pull then took the combined score down with it. |
+| EV02, EV03, EV07, EV09 (filler "Really.", pasted quote, `; and, moreover,` padding, human opening paragraph) | style 0.22–0.32 → unsure/human 0.33–0.39, model still 0.59–0.70 | signal two | Each change adds short sentences, quote marks or semicolons, which raises spread and punctuation density, the two things (85% of the weight, 0.45 + 0.40) `style_signal` reads as human. The words are the same AI words; the surface shape moved. |
+| EV05 (heavily edited), EV08 (a 10-word AI text) | model 0.32 and 0.25 → human | signal one | EV05's casual rewording is genuinely less predictable. EV08 is below any useful window: a few tokens give a noisy perplexity, and the 400-token window assumption fails. |
+| EV04, EV06 (rare words, one huge sentence) | 0.54 and 0.46, unsure | signal one + label mapping | Rare words (EV04) lift perplexity, lowering the model score to 0.61. EV04 at 0.542 sits 0.008 under the AI cutoff of 0.55, so the *label mapping* is the last stage that let it through. |
+| PI01, PI02, PI03, PI05 (injected instructions / fake JSON) | PI02 model 0.20; PI05 style 0.026, model 0.64 | signal one and signal two | The service never *obeys* the instruction (it never reads text as instructions); the prefix just changes the shape. `SYSTEM:` / odd tokens raise perplexity (PI02), and PI05's quotes, braces and commas push punctuation density to its human maximum, so style dropped to 0.026 and the min-pull dragged the combined score to 0.18. |
+| FP02, FP03, FP04, FP05, FP06 (real human writing called AI) | both signals 0.57–0.88, combined 0.59–0.73 | signals one and two together | Formal, second-language, rubric, technical and template writing is plain, uses common words and keeps sentences the same length. Signal one reads that as predictable and signal two reads it as uniform. They agree because they are measuring the same property (plainness), so the min-pull rule, which protects against one signal over-firing, does nothing here. FP03 is the worst case (see above). |
+| MF03, MF04 (control characters, punctuation only) | model 0.00 / 0.01, style 0.73 / 1.00 → human | route | There is no check that the text contains words. Garbage gets a huge perplexity, hence "human", instead of a 400. |
+| MF05, MF06, MF07 (one long word, emoji, right-to-left script) | model 0.91–0.998, style 0.73–1.0 → ai | route + signal two | Repeated or non-Latin input is trivially predictable for GPT-2, and `stylometry.words` only matches `[a-z0-9']`, so non-Latin text has no words and falls to the default (style 1.0 = AI). Same root cause as MF03/04: nothing validates the input before it is scored. |
+| MF08 (60,000 characters) | 200, ai 0.65 | route | Same cause as criterion 5: no size cap. |
 
-     Look for a pattern. Five failures on one signal is one problem, not five. -->
+**The pattern.** The 24 broken attacks and the two missed criteria reduce to three problems,
+not 26:
+
+1. **The route trusts its input** (criterion 5, MF03–MF08, EV08). A length cap, a minimum number
+   of real words and a script check before scoring would remove 7 breaks (MF03–MF08, EV08) and the criterion 5 miss with no change to scoring.
+2. **Signal two is the common thread in the evasions and injections** (EV02, EV03, EV07,
+   EV09, PI02, PI05, criterion 2). It scores *shape* (sentence spread and punctuation density), and
+   both are cheap to move without changing the writing. Punctuation is 40% of its weight and is the
+   easiest to game.
+3. **Both signals measure "plainness", not authorship** (FP02–FP06). This is the one that matters most
+   because it falsely accuses real writers, and tuning thresholds can't fix it: lifting the AI cutoff
+   from 0.55 to ~0.75 would clear most FPs but would also leave nearly every evasion    and nearly all the
+      real AI paragraphs (0.42–0.60) uncaught.
+
+**Were my targets too easy?** Criteria 1, 3 and 4 passed on every trial. Criterion 3 is the loosest:
+it only asks that *some* input in the set hits each label, which I satisfied by choosing inputs. I'd tighten
+it to "at least 3 of 5 clear-AI pieces labelled `ai`" (today 1 of 5), which would have failed. Criterion
+1 needs re-running on real writing and with a harder set (second-language, formal) because the attack
+run showed that is where false positives actually are: 5 of 8.
+
+<!-- For each miss AND each broken attack: the stage and the mechanism. (done above) -->
 
 
 
