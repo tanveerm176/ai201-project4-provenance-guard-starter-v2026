@@ -699,24 +699,29 @@ input does nothing for signal two or for false positives.
 
 ## What's Still Broken
 
-- **The 18 scored attacks** (EV01–EV09, FP02–FP06, PI01–PI03, PI05). One cause per group: signal two
-  can be moved cheaply with filler, quotes and punctuation (EV02, EV03, EV07, EV09, PI05);
-  typos and rare words spike GPT-2 perplexity (EV01, EV04); both signals read plain
-  human writing as AI (FP02–FP06). I stopped because each fix is a separate change with
-  its own side effects, and the milestone asks for one. What I'd do next: make signal two harder to
-  game (drop punctuation density or cap its weight, normalise typos before scoring) and add a
-  third signal not tied to plainness.
-- **Criterion 2** (gap 0.246 vs 0.30). Stylometry doesn't separate short, generic AI
-  paragraphs from casual human prose. The numbers stay as written; I did not lower the target.
-- **EV08** (10-word AI text) still gets a confident `human`. Raising `MIN_WORDS` would catch
-  it, at the cost of rejecting more real short submissions.
-- **Everything is measured on stand-in writing** I drafted for criteria 1–2, and the attack set's
-  `false_positive` rows, so the numbers show direction, not real accuracy.
+After the one change (input validation), 18 of 56 attacks still break and 1 of 5 criteria is still missed.
+**Why I stopped:** the milestone asks for one change, and I made it. I did not run out of time. Each
+fix below is a separate change with its own side effects, and I'd want to re-run both sets after each one.
 
-**The trade I'd make if this ran for real:** I'd keep the AI cutoff high and the unsure band wide, so fewer
-real writers are accused and more AI text goes through as `unsure` or `human`. The people who pay for that are
-the site and honest writers competing against undetected AI text, rather than the writer wrongly
-accused, who in 5 of 8 of my false-positive attacks would have been.
+| Still broken | What I'd do | Why I stopped |
+|---|---|---|
+| **EV01** (typos → `human` 0.27) | Normalise or spell-correct obvious typos before signal one, or score on a typo-stripped copy. | Needs a spell-correction step. It would also change scores for real writers who make typos, so it needs its own before/after run. |
+| **EV02, EV03, EV07, EV09** (filler sentences, a pasted quote, `; and, moreover,` padding, a human opening paragraph) | Cap signal two's weight, and remove or down-weight punctuation density (40% of its score). Score the text in chunks so a bolted-on paragraph can't hide the rest. | Re-weighting changes every score, including the false-positive rows, so it can't be bundled with this fix. |
+| **EV04, EV06** (rare words, one huge sentence → `unsure`) | Nothing cheap. EV04 is 0.008 under the AI cutoff, but moving a threshold for one input is tuning to the test. | Raising perplexity with rare words is a real limit of a perplexity-only signal, so it needs a different signal. |
+| **EV05, EV08** (heavily edited AI, a 10-word AI text → `human`) | EV05: accept it; heavily human-edited text is partly human. EV08: raise `MIN_WORDS` (e.g. to 20). | Raising `MIN_WORDS` rejects more real short writing, a cost I'd rather not take for one attack. |
+| **PI01, PI02, PI03, PI05** (injected instructions or fake JSON) | Strip or flag instruction-like prefixes (`SYSTEM:`, "ignore all previous…") and quotes or braces, and log them. | The service never obeys the text, so the harm is score distortion, not instruction following. It's lower priority than false accusations. |
+| **FP02–FP06** (real human writing called `ai`, 0.59–0.73) | A third signal that isn't "plainness", and a rule that never gives the `ai` label from signals that agree only because both measure plain, regular prose. Short term, a higher AI cutoff. | This one matters most. Raising the cutoff from 0.55 to about 0.75 clears most of them but leaves nearly all real AI text (0.42–0.60) uncaught, and a third signal is a build, not a tweak. |
+| **Criterion 2** (gap 0.246 vs 0.30, MISSED all 3 trials) | Same fix as the EV02/EV03/EV07/EV09 and FP rows: a harder-to-game signal two. | Same reason. I left the target at 0.30 on purpose, because lowering a number I missed isn't a revision. |
+
+**Caveats that apply to everything above.** Criteria 1 and 2 were run on 10 "own writing" and 5 AI
+paragraphs I drafted as stand-ins, not on a student's real writing, so they show direction, not real accuracy.
+All three trials were identical to four decimals, so I never saw the run-to-run variance the criteria were designed
+to catch. And criterion 3 is loose: I'd tighten it to "at least 3 of 5 clear-AI pieces labelled `ai`" (today 1 of 5).
+
+**The trade I'd make if this ran for real:** I'd keep the AI cutoff high and the unsure band wide, accepting
+that more AI-written text gets through as `unsure` or `human`, because a wrong accusation costs a writer far more than a miss
+costs the site. Those who pay are the site and honest writers competing against undetected AI text; the alternative is that
+writers like FP03 (a second-language speaker, labelled `ai` at 0.73) pay, and they pay more.
 
 
 <!-- ═════════════════════════════════════════════════════════════════════
