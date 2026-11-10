@@ -490,20 +490,91 @@ whose work got caught by it:
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |
+| 1. My own writing flagged as AI | ≤ 1 of 10 per run | 0/10 | 0/10 | 0/10 | MET |
+| 2. Score spread, AI median minus own-writing median | ≥ 0.30 | 0.246 | 0.246 | 0.246 | MISSED |
+| 3. All three labels reachable | 3 of 3 | 3/3 | 3/3 | 3/3 | MET |
+| 4. Valid appeals recorded, original decision intact | 5 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 5. Bad input → 400/413, no decision, rejection logged | 5 of 5 | 4/5 | 4/5 | 4/5 | MISSED |
 
-**Real output from one trial**, pasted as text, naming the file and function
-that produced it:
+Full output: `results/run_2026-11-09_2108_before.md`. Scenarios live in
+`scenarios.py`; produced by `run_eval.py::main`. Criteria 4 and 5 can't be
+expressed as "send text and read the response", so I extended `run_eval.py`
+with a `"run"` hook: `scenarios.py::_run_appeals` submits then appeals and
+checks the audit log, and `scenarios.py::_run_bad_input` checks the status,
+that no decision entry exists, and that a rejection entry exists.
+
+
+**Real output from one trial** (Trial 1 of `results/run_2026-11-09_2108_before.md`,
+produced by `app.py::submit` and `app.py::appeal`, recorded by
+`run_eval.py::main`; `sent` previews removed, excerpts of each scenario):
+
+*Criterion 1: first three of my own pieces*
 
 ```json
+[
+  {"status": 200, "guess": "human", "confidence": 0.3243, "model_score": 0.3036, "style_score": 0.3865, "label": "This text appears more consistent with human writing."},
+  {"status": 200, "guess": "human", "confidence": 0.1422, "model_score": 0.36, "style_score": 0.0696, "label": "This text appears more consistent with human writing."},
+  {"status": 200, "guess": "unsure", "confidence": 0.3964, "model_score": 0.5689, "style_score": 0.3389, "label": "We can't reliably tell from this text alone. If this is your work, you can ask for a human review."}
+]
+```
 
+*Criterion 2: AI pieces 1, 2 and 5. Medians over all five were AI 0.451
+(scores 0.4222, 0.451, 0.4164, 0.5306, 0.5784) vs own writing 0.2052
+(0.3243, 0.1422, 0.3964, 0.119, 0.1968, 0.2111, 0.3932, 0.3789, 0.1993, 0.1866)*
+
+```json
+[
+  {"status": 200, "guess": "unsure", "confidence": 0.4222, "model_score": 0.7698, "style_score": 0.3063, "label": "We can't reliably tell from this text alone. If this is your work, you can ask for a human review."},
+  {"status": 200, "guess": "unsure", "confidence": 0.451, "model_score": 0.7907, "style_score": 0.3377, "label": "We can't reliably tell from this text alone. If this is your work, you can ask for a human review."},
+  {"status": 200, "guess": "ai", "confidence": 0.5784, "model_score": 0.9067, "style_score": 0.469, "label": "This text appears likely to have been written by AI."}
+]
+```
+
+*Criterion 3: one result per label*
+
+```json
+[
+  {"status": 200, "guess": "unsure", "confidence": 0.4222, "model_score": 0.7698, "style_score": 0.3063, "label": "We can't reliably tell from this text alone. If this is your work, you can ask for a human review."},
+  {"status": 200, "guess": "ai", "confidence": 0.5982, "model_score": 0.8746, "style_score": 0.5061, "label": "This text appears likely to have been written by AI."},
+  {"status": 200, "guess": "human", "confidence": 0.119, "model_score": 0.3327, "style_score": 0.0477, "label": "This text appears more consistent with human writing."}
+]
+```
+
+*Criterion 4: two of the five appeals*
+
+```json
+[
+  {"passed": true, "submit_status": 200, "appeal_status": 200,
+   "appeal_body": {"content_id": "3e9892e4-ffab-4201-afa8-4264b9cd0c04", "message": "Your appeal was recorded and will be reviewed by a person.", "status": "under_review"},
+   "decision_entries": 1, "appeal_entries": 1},
+  {"passed": true, "submit_status": 200, "appeal_status": 200,
+   "appeal_body": {"content_id": "ac05341e-5758-4116-a546-80fba934736b", "message": "Your appeal was recorded and will be reviewed by a person.", "status": "under_review"},
+   "decision_entries": 1, "appeal_entries": 1}
+]
+```
+
+*Criterion 5: a pass (null text) and the failure (over 50,000 characters)*
+
+```json
+[
+  {"passed": true, "kind": "null_text", "status": 400, "decision_entries": 0, "rejection_entries": 1,
+   "body": {"error": "invalid_input", "message": "`text` must be a non-empty string."}},
+  {"passed": false, "kind": "over_50000_chars", "status": 200, "decision_entries": 1, "rejection_entries": 0,
+   "body": {"confidence": 0.9981, "content_id": "2417d4c7-cdec-41ad-adb9-fec56d93058c", "guess": "ai", "label": "This text appears likely to have been written by AI.", "model_score": 0.9975, "style_score": 1.0}}
+]
 ```
 
 **Diagnoses**
+
+- **Criterion 5 (route):** `app.py::submit` has no length check, so a 50,005-character
+  body goes straight to scoring: it returned `200`, was scored `ai` at 0.998, wrote
+  a decision entry and no rejection. The route stage needs a size cap returning
+  413 plus `audit.log_rejection`. Also a cost risk: it ran the model on oversize input.
+- **Criterion 2 (signal one / combining rule):** the AI pieces' `model_score`
+  was high (0.77–0.91) but `style_score` stayed 0.31–0.47, and the combining rule
+  pulls toward the lower signal (`LOWER_SIGNAL_PULL = 0.5`), so the combined
+  gap is 0.246. Stylometry doesn't separate short, generic AI paragraphs from
+  casual human writing, so signal two is the weak stage.
 
 <!-- For each miss AND each broken attack: the stage and the mechanism.
 

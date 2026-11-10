@@ -113,6 +113,15 @@ def main():
         trials = []
         for trial in range(1, args.trials + 1):
             results = []
+            if scenario.get("run"):
+                try:
+                    results = scenario["run"](args.url, requests, trial)
+                except Exception as exc:  # noqa: BLE001
+                    results = [{"status": None, "error": f"{type(exc).__name__}: {exc}"}]
+                trials.append(results)
+                passed = sum(1 for r in results if r.get("passed"))
+                print(f"  trial {trial}: {passed}/{len(results)} passed")
+                continue
             for i, body in enumerate(bodies_for(scenario), 1):
                 preview = describe(body)
                 try:
