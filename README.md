@@ -408,8 +408,64 @@ can look like one. -->
 
 ## Attack Run — Before
 
-<!-- Every attack with its outcome and a held-or-broke mark.
-     `run_attacks.py --label before` produces the table. -->
+Full table: `results/attack_run_2026-11-09_2018_before.md`. **Held 32, broke 24, of 56.**
+
+How I marked them: an attack **held** if the service did the right thing for
+that input (rejected junk with a 4xx, rate-limited the flood, called genuine
+human writing human or unsure, called AI text AI). It **broke** if it got
+what it was going for. For evasion/injection rows the text is AI-written, so
+anything short of an `ai` guess counts as evaded. For `false_positive` rows
+an `ai` guess is the break; `unsure` held.
+
+| Family | Held | Broke | Broke rows |
+|---|---|---|---|
+| evasion (10) | 1 | 9 | EV01–EV09 (only EV10, repeated stanzas, was caught at 0.729) |
+| false_positive (8) | 3 | 5 | FP02 0.733, FP03 0.730, FP04 0.633, FP05 0.677, FP06 0.586 all called `ai` |
+| prompt_injection (6) | 2 | 4 | PI01 unsure, PI02 human, PI03 unsure, PI05 human; PI04, PI06 held |
+| malformed (20) | 14 | 6 | MF03 control chars → human, MF04 punctuation → human, MF05 one long word → ai, MF06 emoji → ai 0.998, MF07 RTL script → ai, MF08 60k chars accepted with no size cap |
+| flood_same_creator (12) | 12 | 0 | first 5 got `200`, FL01_06–12 got `429` |
+
+Notes: RQ10 and RQ11 returned `429` (no usable `creator_id`, so they counted
+against my address) and never reached the route, so I marked them held but
+they did not test my input handling. For PI01–PI03/PI05 there is no evidence
+the service "obeyed" the injected instruction (it never reads text as
+instructions); the low scores come from the signals, but the outcome is still
+a miss. EV05 is a heavily human-edited AI draft, so "human" is arguably fair.
+
+**Ten audit log entries from the run**
+
+Pulled from `GET /log` (`results/audit_extract.json`).
+
+```json
+{"timestamp":"2026-11-10T01:17:56+00:00","content_id":"0fdf9876-1699-45a1-9181-62bb04dd8be9","creator_id":"attacker_FP03","guess":"ai","model_score":0.8051,"style_score":0.7046,"combined_score":0.7297,"label":"This text appears likely to have been written by AI.","status":"decided"}
+{"timestamp":"2026-11-10T01:17:56+00:00","content_id":"c1775902-87a3-4b7c-8687-9806eca5d14d","creator_id":"attacker_FP02","guess":"ai","model_score":0.7387,"style_score":0.7311,"combined_score":0.733,"label":"This text appears likely to have been written by AI.","status":"decided"}
+{"timestamp":"2026-11-10T01:17:54+00:00","content_id":"1bfdf34c-72dc-474e-a443-aad657e73f7d","creator_id":"attacker_EV01","guess":"human","model_score":0.1635,"style_score":0.5767,"combined_score":0.2668,"label":"This text appears more consistent with human writing.","status":"decided"}
+{"timestamp":"2026-11-10T01:17:57+00:00","content_id":"4e0b2b4b-cd55-4a54-b491-55ef04a18cb4","creator_id":"attacker_PI02","guess":"human","model_score":0.2044,"style_score":0.2222,"combined_score":0.2088,"label":"This text appears more consistent with human writing.","status":"decided"}
+{"timestamp":"2026-11-10T01:17:58+00:00","content_id":"2f39cea1-8ea4-4387-827a-f5a922f18336","creator_id":"attacker_PI05","guess":"human","model_score":0.6401,"style_score":0.0257,"combined_score":0.1793,"label":"This text appears more consistent with human writing.","status":"decided"}
+{"timestamp":"2026-11-10T01:17:58+00:00","content_id":"538f9c01-c11d-40f9-8450-f92c66532638","creator_id":"attacker_MF03","guess":"human","model_score":0.0,"style_score":0.7273,"combined_score":0.1818,"label":"This text appears more consistent with human writing.","status":"decided"}
+{"timestamp":"2026-11-10T01:17:59+00:00","content_id":"612eae97-0080-45ca-b4f4-50826ce9cb79","creator_id":"attacker_MF06","guess":"ai","model_score":0.9969,"style_score":1.0,"combined_score":0.9977,"label":"This text appears likely to have been written by AI.","status":"decided"}
+{"timestamp":"2026-11-10T01:18:00+00:00","creator_id":"attacker_RQ12","event":"rejected","status":"rejected","reason":"invalid_text"}
+{"timestamp":"2026-11-10T01:18:00+00:00","creator_id":"unknown","event":"rejected","status":"rejected","reason":"rate_limited","limit":"5 per 1 minute"}
+{"timestamp":"2026-11-10T01:18:00+00:00","creator_id":"attacker_flood","event":"rejected","status":"rejected","reason":"rate_limited","limit":"5 per 1 minute"}
+```
+
+What they show: FP02/FP03 are real-style human writing labelled AI; PI05 has
+`model_score` 0.64 but `style_score` 0.026, and the style signal alone pulled
+it to "human"; MF03 has `model_score` 0.0 on junk; MF06 emoji scored 0.998;
+the last three are rejections (route 400, a rate-limited unknown caller, and
+the flood).
+
+**The single worst outcome** — the one I'd least want to explain to a writer
+whose work got caught by it:
+
+**FP03**, a non-native English speaker writing carefully about their first
+month in a new country, got `guess: ai`, combined 0.7297, label "likely
+written by AI". Both signals agreed (model 0.805, style 0.705), so it isn't a
+one-signal fluke: plain, short, regular sentences are exactly what both
+signals read as machine-like. That writer did nothing wrong and is told
+otherwise by the system, and the people most exposed are those writing in a
+second language. The appeal route exists, but it only helps after the label
+has already been shown.
 
 
 
